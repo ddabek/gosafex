@@ -67,6 +67,7 @@ func (w *Wallet) runUpdater() {
 				w.updating = true
 			}
 			if temp == false {
+				w.syncing = false
 				w.updating = false
 			}
 		case <-w.quit:
@@ -112,8 +113,15 @@ func (w *Wallet) runUpdater() {
 			} else {
 				if !w.working {
 					if w.GetLatestLoadedBlockHeight() < bcHeight-1 {
+						prevHeight := w.GetLatestLoadedBlockHeight()
 						w.logger.Debugf("[Updater] Known block: %d , bcHeight: %d", w.GetLatestLoadedBlockHeight(), bcHeight)
-						w.updateBlocks(BlocksPerCycle)
+						if err := w.updateBlocks(BlocksPerCycle); err != nil {
+							w.logger.Errorf("[Updater] %s", err.Error())
+						}
+						if prevHeight == w.GetLatestLoadedBlockHeight() {
+							w.logger.Errorf("[Updater] Can't load blocks")
+							w.StopUpdating()
+						}
 					} else {
 						w.syncing = false
 					}

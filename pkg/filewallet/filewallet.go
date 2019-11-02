@@ -31,6 +31,17 @@ func (w *FileWallet) appendKey(key string, data []byte) error {
 	return nil
 }
 
+func (w *FileWallet) massAppendKey(key string, data [][]byte) error {
+	var filteredData [][]byte
+	for _, el := range data {
+		filteredData = append(filteredData, []byte(hex.EncodeToString(el)))
+	}
+	if err := w.db.MassAppend(key, filteredData); err != nil {
+		return err
+	}
+	return nil
+}
+
 //Reads a composite value and returns it split in different byte arrays
 func (w *FileWallet) readAppendedKey(key string) ([][]byte, error) {
 	data, err := w.db.ReadAppended(key)
@@ -74,7 +85,7 @@ func (w *FileWallet) readKey(key string) ([]byte, error) {
 }
 
 func (w *FileWallet) putInfo(info *WalletInfo) error {
-	w.logger.Debugf("[filewallet] Putting wallet info")
+	w.logger.Debugf("[Filewallet] Putting wallet info")
 	if err := w.deleteKey(WalletInfoKey); err != nil {
 		return err
 	}
@@ -100,7 +111,7 @@ func (w *FileWallet) putInfo(info *WalletInfo) error {
 }
 
 func (w *FileWallet) getInfo() (*WalletInfo, error) {
-	w.logger.Debugf("[filewallet] Getting wallet info")
+	w.logger.Debugf("[Filewallet] Getting wallet info")
 	ret := &WalletInfo{}
 
 	data, err := w.readAppendedKey(WalletInfoKey)
@@ -130,7 +141,7 @@ func (w *FileWallet) loadDefaults() {
 
 //PutData Writes data in a key in the generic data bucket
 func (w *FileWallet) PutData(key string, data []byte) error {
-	w.logger.Debugf("[filewallet] Writing generic data")
+	w.logger.Debugf("[Filewallet] Writing generic data")
 	if w.info != nil {
 		defer w.db.SetBucket(w.info.Name)
 	}
@@ -151,7 +162,7 @@ func (w *FileWallet) PutData(key string, data []byte) error {
 
 //GetData Reads data from a key in the generic data bucket
 func (w *FileWallet) GetData(key string) ([]byte, error) {
-	w.logger.Debugf("[filewallet] Getting generic data")
+	w.logger.Debugf("[Filewallet] Getting generic data")
 	if w.info != nil {
 		defer w.db.SetBucket(w.info.Name)
 	}
@@ -182,6 +193,9 @@ func (w *FileWallet) GetAccount() string {
 }
 
 func (w *FileWallet) CreateAccount(accountInfo *WalletInfo, isTestnet bool) error {
+	if w.AccountExists(accountInfo.Name) {
+		return ErrAccountExists
+	}
 	if err := w.db.CreateBucket(accountInfo.Name); err != nil {
 		return err
 	}
@@ -213,12 +227,13 @@ func (w *FileWallet) CreateAccount(accountInfo *WalletInfo, isTestnet bool) erro
 	if err := w.initUnspentOutputs(); err != nil {
 		return err
 	}
+	w.knownAccounts = append(w.knownAccounts, accountInfo.Name)
 	return nil
 }
 
 //OpenAccount Opens an account and all the connected data
 func (w *FileWallet) OpenAccount(accountInfo *WalletInfo, createOnFail bool, isTestnet bool) error {
-	w.logger.Debugf("[filewallet] Opening account: %s", accountInfo.Name)
+	w.logger.Debugf("[Filewallet] Opening account: %s", accountInfo.Name)
 	if w.GetAccount() == accountInfo.Name {
 		w.logger.Debugf("[Filewallet] Account already open")
 		return nil
@@ -255,15 +270,14 @@ func (w *FileWallet) OpenAccount(accountInfo *WalletInfo, createOnFail bool, isT
 	return nil
 }
 
-func (w *FileWallet) GetAccounts() ([]string, error) {
-	w.logger.Debugf("[filewallet] Listing all accounts")
+func (w *FileWallet) loadAccounts() error {
 	if w.info != nil && w.db.BucketExists(w.info.Name) {
 		defer w.db.SetBucket(w.info.Name)
 	}
 	w.db.SetBucket(genericDataBucketName)
 	data, err := w.readAppendedKey(WalletListReferenceKey)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	ret := []string{}
 	for _, el := range data {
@@ -271,11 +285,22 @@ func (w *FileWallet) GetAccounts() ([]string, error) {
 			ret = append(ret, string(el))
 		}
 	}
-	return ret, nil
+	w.knownAccounts = ret
+	return nil
+}
+
+func (w *FileWallet) GetAccounts() ([]string, error) {
+	w.logger.Debugf("[Filewallet] Listing all accounts")
+	if w.knownAccounts == nil {
+		if err := w.loadAccounts(); err != nil {
+			return nil, err
+		}
+	}
+	return w.knownAccounts, nil
 }
 
 func (w *FileWallet) AccountExists(accountName string) bool {
-	w.logger.Debugf("[filewallet] Checking account existence: %s ", accountName)
+	w.logger.Debugf("[Filewallet] Checking account existence: %s ", accountName)
 	if accs, err := w.GetAccounts(); err != nil {
 		return false
 	} else {
@@ -290,7 +315,7 @@ func (w *FileWallet) AccountExists(accountName string) bool {
 
 //RemoveAccount DUMMY FUNCTION for now
 func (w *FileWallet) RemoveAccount(accountName string) error {
-	w.logger.Warnf("[filewallet] Deleting account: %s", accountName)
+	w.logger.Warnf("[Filewallet] Deleting account: %s", accountName)
 	if !w.AccountExists(accountName) {
 		return nil
 	}
@@ -310,6 +335,12 @@ func (w *FileWallet) RemoveAccount(accountName string) error {
 		return err
 	} else if err := w.deleteAppendedKey(WalletListReferenceKey, i); err != nil {
 		return err
+	}
+	accs, _ := w.GetAccounts()
+	for i, el := range accs {
+		if el == accountName {
+			w.knownAccounts = append(w.knownAccounts[:i], w.knownAccounts[i+1:]...)
+		}
 	}
 	return nil
 }
@@ -356,7 +387,7 @@ func New(file string, accountName string, masterkey string, createOnFail bool, i
 
 //NewClean Opens or creates a new wallet file without opening an account on creation
 func NewClean(file string, masterkey string, isTestnet bool, createOnFail bool, prevLog *log.Logger) (*FileWallet, error) {
-	prevLog.Infof("[filewallet] Creating new filewallet")
+	prevLog.Infof("[Filewallet] Creating new filewallet")
 	w := new(FileWallet)
 	w.logger = prevLog
 	var err error
@@ -372,6 +403,9 @@ func NewClean(file string, masterkey string, isTestnet bool, createOnFail bool, 
 		if s != passwordCheckField || (err != nil && err.Error() == ErrBucketNotInit.Error()) {
 			w.logger.Errorf("[FileWallet] %s", ErrWrongFilewalletPass)
 			return w, ErrWrongFilewalletPass
+		}
+		if err = w.loadAccounts(); err != nil {
+			return nil, err
 		}
 		err = w.loadLatestBlock()
 		if w.db.BucketExists(genericBlockBucketName) {

@@ -48,6 +48,7 @@ func (w *Wallet) rescanBlocks(accountName string, start uint64, step uint64) (er
 }
 
 func (w *Wallet) updateBlocks(nblocks uint64) error {
+	w.logger.Debugf("[Wallet] Beginning updateBlocks")
 	if w.client == nil {
 		w.logger.Errorf("[Wallet] %s", ErrClientNotInit)
 		return ErrClientNotInit
@@ -55,6 +56,7 @@ func (w *Wallet) updateBlocks(nblocks uint64) error {
 	if w.latestInfo == nil {
 		return ErrDaemonInfo
 	}
+	w.logger.Debugf("[Wallet] Client ok")
 	info := w.latestInfo
 	var bcHeight uint64
 
@@ -70,13 +72,19 @@ func (w *Wallet) updateBlocks(nblocks uint64) error {
 		targetBlock = knownHeight + nblocks
 	}
 	targetBlock -= 1
+	if knownHeight != 0 {
+		knownHeight += 1
+	}
 
 	w.logger.Infof("[Wallet] Fetching blocks: %d to %d", knownHeight, targetBlock)
 	blocks, err := w.client.GetBlocks(knownHeight, targetBlock)
 	if err != nil {
 		return err
 	}
-	w.processBlockRange(blocks)
+	w.logger.Debugf("[Wallet] Fetched %d blocks", len(blocks.Block))
+	if err := w.processBlockRange(blocks); err != nil {
+		return err
+	}
 	knownHeight = w.wallet.GetLatestBlockHeight()
 
 	w.logger.Debugf("[Wallet] Updating balance")

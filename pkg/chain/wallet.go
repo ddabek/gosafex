@@ -61,7 +61,9 @@ func (w *Wallet) updateBlocks(nblocks uint64) error {
 	var bcHeight uint64
 
 	knownHeight := w.wallet.GetLatestBlockHeight()
-
+	if knownHeight < w.rescanBegin {
+		knownHeight = w.rescanBegin
+	}
 	bcHeight = info.Height
 
 	var targetBlock uint64
@@ -82,7 +84,7 @@ func (w *Wallet) updateBlocks(nblocks uint64) error {
 		return err
 	}
 	w.logger.Debugf("[Wallet] Fetched %d blocks", len(blocks.Block))
-	if err := w.processBlockRange(blocks); err != nil {
+	if err := w.processBlockRange(blocks, w.rescanBegin > 0); err != nil {
 		return err
 	}
 	knownHeight = w.wallet.GetLatestBlockHeight()
@@ -541,7 +543,7 @@ func (w *Wallet) GetOutput(outID string) (map[string]interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	return map[string]interface{}{"info": info, "out": out}, nil
+	return map[string]interface{}{"info": *info, "out": *out}, nil
 }
 
 //GetOutputsFromTransaction .
@@ -591,6 +593,13 @@ func (w *Wallet) GetUnspentOutputs() []string {
 	return w.wallet.GetUnspentOutputs()
 }
 
+func (w *Wallet) IsUnlocked(outInfo *filewallet.OutputInfo) bool {
+	if outInfo.TxLocked == filewallet.UnlockedStatus {
+		return true
+	}
+	return false
+}
+
 func (w *Wallet) SetLogger(prevLog *log.Logger) {
 	w.logger = prevLog
 }
@@ -604,6 +613,8 @@ func New(prevLog *log.Logger) *Wallet {
 	w.update = make(chan bool, 8)
 	w.quit = make(chan bool)
 	w.rescan = make(chan string, 512)
+	w.begin = make(chan uint64, 1)
+
 	return w
 }
 

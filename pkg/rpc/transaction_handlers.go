@@ -7,7 +7,10 @@ import (
 
 	"github.com/safex/gosafex/pkg/account"
 	"github.com/safex/gosafex/pkg/chain"
+	"github.com/safex/gosafex/pkg/safex"
 )
+
+const SafexCreateAccountUnlockTime = 15
 
 type TransactionRq struct {
 	TransactionID string `json:"transactionid"`
@@ -20,16 +23,33 @@ type TransactionRq struct {
 
 	fakeOutsCount uint64 `json:"fake_outs_count"`
 	extra         []byte `json:"extra"`
-	unlockTime    uint32 `json:"unlock_time"`
+	unlockTime    uint64 `json:"unlock_time"`
 	priority      uint32 `json:"priority"`
 
 	TxAsHex JSONArray `json:"tx_as_hex"`
+}
+
+type TransactionCreateAccountRq struct {
+	Username           string        `json:"username,required"`
+	Key                []byte        `json:"key,required"`
+	AccountData        string        `json:"account_data,required"`
+	transactionRequest TransactionRq `json:" transaction_request"`
 }
 
 // @todo txSend mockup
 var txSendMock int = 0
 
 func transactionGetData(w *http.ResponseWriter, r *http.Request, rqData *TransactionRq) bool {
+	statusErr := UnmarshalRequest(r, rqData)
+	// Check for error.
+	if statusErr != EverythingOK {
+		FormJSONResponse(nil, statusErr, w)
+		return false
+	}
+	return true
+}
+
+func transactionCreateAccountGetData(w *http.ResponseWriter, r *http.Request, rqData *TransactionCreateAccountRq) bool {
 	statusErr := UnmarshalRequest(r, rqData)
 	// Check for error.
 	if statusErr != EverythingOK {
@@ -125,71 +145,43 @@ func (w *WalletRPC) GetHistory(rw http.ResponseWriter, r *http.Request) {
 	FormJSONResponse(data, EverythingOK, &rw)
 }
 
-func (w *WalletRPC) TransactionCash(rw http.ResponseWriter, r *http.Request) {
-	w.logger.Infof("[RPC] Generating cash transaction")
-	var rqData TransactionRq
-	if !transactionGetData(&rw, r, &rqData) {
+func (w *WalletRPC) TransactionCreateAccount(rw http.ResponseWriter, r *http.Request) {
+	w.logger.Infof("[RPC] Generating create account transaction")
+	var rqData TransactionCreateAccountRq
+	if !transactionCreateAccountGetData(&rw, r, &rqData) {
 		// Error response already handled
 		return
 	}
 
-	if rqData.Amount == 0 {
+	data := make(JSONElement)
+
+	txrqData := rqData.transactionRequest
+	if txrqData.Amount == 0 {
 		FormJSONResponse(nil, TransactionAmountZero, &rw)
 		return
 	}
 
-	if rqData.Destination == "" {
-		FormJSONResponse(nil, TransactionDestinationZero, &rw)
-		return
+	if txrqData.Mixin == uint32(0) {
+		txrqData.Mixin = 6
 	}
-
-	if rqData.Mixin == uint32(0) {
-		rqData.Mixin = 6
-	}
-
-	// @todo Handle PID
-
-	/*var pid []byte
-	if rqData.PaymentID != "" && (len(rqData.PaymentID) != 16 || len(rqData.PaymentID) != 64) {
-		FormJSONResponse(nil, WrongPaymentIDFormat, &rw)
-		return
-	}
-
-	pid, err := hex.DecodeString(rqData.PaymentID)
-
-	extra := pid
-	fmt.Println("exttra: ", extra)
-
-	if err != nil {
-		data := make(JSONElement)
-		data["msg"] = err.Error()
-		FormJSONResponse(data, PaymentIDParseError, &rw)
-		return
-	}*/
-
-	// @todo Add here actual logic for creating txs.
-	/*if txSendMock%2 != 0 {
-		FormJSONResponse(nil, ErrorDuringSendingTx, &rw)
-		txSendMock++
-		return
-	}
-	txSendMock++
-	*/
-	data := make(JSONElement)
-	destAddress, err := account.FromBase58(rqData.Destination)
 
 	fakeOutsCount := 0
 
-	if rqData.fakeOutsCount != 0 {
-		fakeOutsCount = int(rqData.fakeOutsCount)
-	}
-	//@Todo point to a variable
-	unlockTime := uint32(10)
-	if rqData.unlockTime != 0 {
-		unlockTime = rqData.unlockTime
+	if txrqData.fakeOutsCount != 0 {
+		fakeOutsCount = int(txrqData.fakeOutsCount)
 	}
 
-	ptxs, err := w.wallet.TxCreateCash([]chain.DestinationEntry{chain.DestinationEntry{rqData.Amount, 0, *destAddress, false, false}}, fakeOutsCount, rqData.fakeOutsCount, unlockTime, rqData.extra, false)
+	priority := uint32(1)
+	if txrqData.priority != 0 {
+		priority = txrqData.priority
+	}
+
+	accountData := safex.CreateAccountData{rqData.Username, rqData.Key, rqData.AccountData}
+
+	ptxs, err := w.wallet.TxAccountCreate(&accountData, fakeOutsCount, SafexCreateAccountUnlockTime+10 /*Just in case */, priority, nil, false)
+
+	// chain.DestinationEntry{rqData.Amount, 0, *destAddress, false, false}
+
 	if err != nil {
 		data["msg"] = err.Error()
 		FormJSONResponse(data, FailedToCreateTransaction, &rw)
@@ -226,6 +218,111 @@ func (w *WalletRPC) TransactionCash(rw http.ResponseWriter, r *http.Request) {
 	FormJSONResponse(data, retInt, &rw)
 }
 
+func (w *WalletRPC) TransactionCash(rw http.ResponseWriter, r *http.Request) {
+	w.logger.Infof("[RPC] Generating cash transaction")
+	var rqData TransactionRq
+	if !transactionGetData(&rw, r, &rqData) {
+		// Error response already handled
+		return
+	}
+
+	if rqData.Amount == 0 {
+		FormJSONResponse(nil, TransactionAmountZero, &rw)
+		return
+	}
+
+	if rqData.Destination == "" {
+		FormJSONResponse(nil, TransactionDestinationZero, &rw)
+		return
+	}
+
+	if rqData.Mixin == uint32(0) {
+		rqData.Mixin = 6
+	}
+
+	// @todo Handle PID
+
+	var pid []byte
+	if rqData.PaymentID != "" && (len(rqData.PaymentID) != 16 || len(rqData.PaymentID) != 64) {
+		FormJSONResponse(nil, WrongPaymentIDFormat, &rw)
+		return
+	}
+
+	pid, err := hex.DecodeString(rqData.PaymentID)
+
+	extra := pid
+	fmt.Println("extra: ", extra)
+
+	if err != nil {
+		data := make(JSONElement)
+		data["msg"] = err.Error()
+		FormJSONResponse(data, PaymentIDParseError, &rw)
+		return
+	}
+
+	// @todo Add here actual logic for creating txs.
+	// if txSendMock%2 != 0 {
+	// 	FormJSONResponse(nil, ErrorDuringSendingTx, &rw)
+	// 	txSendMock++
+	// 	return
+	// }
+	// txSendMock++
+
+	data := make(JSONElement)
+	destAddress, err := account.FromBase58(rqData.Destination)
+
+	fakeOutsCount := 0
+
+	if rqData.fakeOutsCount != 0 {
+		fakeOutsCount = int(rqData.fakeOutsCount)
+	}
+	//@Todo point to a variable
+	unlockTime := uint64(10)
+	if rqData.unlockTime != 0 {
+		unlockTime = rqData.unlockTime
+	}
+
+	priority := uint32(1)
+	if rqData.priority != 0 {
+		priority = rqData.priority
+	}
+
+	ptxs, err := w.wallet.TxCreateCash([]chain.DestinationEntry{chain.DestinationEntry{rqData.Amount, 0, *destAddress, false, false}}, fakeOutsCount, unlockTime, priority, rqData.extra, false)
+	if err != nil {
+		data["msg"] = err.Error()
+		FormJSONResponse(data, FailedToCreateTransaction, &rw)
+		return
+	}
+
+	totalFee := uint64(0)
+	data["txs"] = make(JSONArray, 0)
+	var retInt StatusCodeError
+	if len(ptxs) == 0 {
+		data["status"] = "unknown error"
+		retInt = ErrorDuringSendingTx
+	} else {
+		data["status"] = "ok"
+	}
+	for _, ptx := range ptxs {
+		txJSON := make(JSONElement)
+		totalFee += ptx.Fee
+		res, err := w.wallet.CommitPtx(&ptx)
+		if err != nil {
+			txJSON["status"] = "error"
+			txJSON["error"] = err
+			retInt = ErrorDuringSendingTx
+			data["status"] = "error"
+		} else {
+			txJSON["status"] = "sent"
+			txJSON["tx"] = ptx.Tx.String()
+			txJSON["fee"] = ptx.Fee
+			txJSON["response"] = res
+			data["txs"] = append(data["txs"].([]interface{}), txJSON)
+		}
+	}
+	FormJSONResponse(data, retInt, &rw)
+}
+
 func (w *WalletRPC) TransactionToken(rw http.ResponseWriter, r *http.Request) {
 	w.logger.Infof("[RPC] Generating token transaction")
 	var rqData TransactionRq
@@ -258,7 +355,7 @@ func (w *WalletRPC) TransactionToken(rw http.ResponseWriter, r *http.Request) {
 
 	// @todo This should be encoded to extra
 	extra := pid
-	fmt.Println("exttra: ", extra)
+	fmt.Println("extra: ", extra)
 
 	if err != nil {
 		data := make(JSONElement)
@@ -268,13 +365,13 @@ func (w *WalletRPC) TransactionToken(rw http.ResponseWriter, r *http.Request) {
 	}
 
 	// @todo Add here actual logic for creating txs.
-	/*if txSendMock%2 != 0 {
-		FormJSONResponse(nil, ErrorDuringSendingTx, &rw)
-		txSendMock++
-		return
-	}
-	txSendMock++
-	*/
+	// if txSendMock%2 != 0 {
+	// 	FormJSONResponse(nil, ErrorDuringSendingTx, &rw)
+	// 	txSendMock++
+	// 	return
+	// }
+	// txSendMock++
+
 	data := make(JSONElement)
 	destAddress, err := account.FromBase58(rqData.Destination)
 

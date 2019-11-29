@@ -43,7 +43,7 @@ func (w *Wallet) rescanBlockRange(blocks safex.Blocks, acc string) error {
 	return nil
 }
 
-func (w *Wallet) processBlockRange(blocks safex.Blocks) error {
+func (w *Wallet) processBlockRange(blocks safex.Blocks, bypass bool) error {
 	// @todo Here handle block metadata.
 	var count int
 	var mcount int
@@ -57,7 +57,7 @@ func (w *Wallet) processBlockRange(blocks safex.Blocks) error {
 	for _, block := range blocks.Block {
 		headers = append(headers, block.GetHeader())
 	}
-	if i, err := w.wallet.PutMassBlockHeaders(headers); err != nil {
+	if i, err := w.wallet.PutMassBlockHeaders(headers, bypass); err != nil {
 		return fmt.Errorf("Loaded only to block %v due to error: %s", i, err.Error())
 	}
 	for _, blck := range blocks.Block {
@@ -130,16 +130,13 @@ func (w *Wallet) countUnlockedOutput(outID string) error {
 }
 
 func (w *Wallet) countOutput(outID string) error {
+	infoList, err := w.wallet.GetMultiOutInfo(outID, []string{"OutputType", "TxLocked"})
+	if err != nil {
+		return err
+	}
+	lock, typ := infoList["TxLocked"], infoList["OutputType"]
 
-	typ, err := w.wallet.GetOutputType(outID)
-	if err != nil {
-		return err
-	}
 	out, err := w.wallet.GetOutput(outID)
-	if err != nil {
-		return err
-	}
-	lock, err := w.wallet.GetOutputLock(outID)
 	if err != nil {
 		return err
 	}
@@ -169,6 +166,7 @@ func (w *Wallet) countOutputs(outIDs []string) error {
 	return err
 }
 
+//TODO: Can be improved by hard saving balance
 func (w *Wallet) loadBalance() error {
 	w.resetBalance()
 	height := w.wallet.GetLatestBlockHeight()

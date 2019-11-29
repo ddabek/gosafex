@@ -370,7 +370,7 @@ func TestGetTransactionByBlock(t *testing.T) {
 func TestUpdateBalance(t *testing.T) {
 	prepareStaticFolder()
 	testLogger.Infof("[Test] Testing balance update")
-	testLogger.SetLevel(log.InfoLevel)
+	testLogger.SetLevel(log.DebugLevel)
 	w := New(testLogger)
 	fullpath := strings.Join([]string{staticfoldername, staticfilename}, "/")
 
@@ -408,7 +408,7 @@ func TestUpdateBalance(t *testing.T) {
 			t.Fatalf("%s", err)
 		}
 	}
-	w.BeginUpdating()
+	w.BeginUpdating(0)
 	for w.syncing {
 		testLogger.Infof("[Test] Waiting for sync")
 		time.Sleep(30 * time.Second)

@@ -24,7 +24,6 @@ HINT: additional tx pub keys in extra and derivations.
 -
 */
 
-
 func (w *Wallet) isOurKey(kImage [crypto.KeyLength]byte, keyOffsets []uint64, outType string, amount uint64) (string, bool) {
 	kImgCurve := crypto.Key(kImage)
 	w.logger.Debugf("[Chain] Checking ownership of input: %v ", kImgCurve)
@@ -38,7 +37,7 @@ func (w *Wallet) isOurKey(kImage [crypto.KeyLength]byte, keyOffsets []uint64, ou
 }
 func (w *Wallet) processTransactionPerAccount(tx *safex.Transaction, blckHash string, minerTx bool, acc string) error {
 	hash := tx.GetTxHash()
-	if hash == "ddd978af6a86223cee7c72cb2509e153a0e5e7ae51661113b1f112c8c5ac109e" {
+	if hash == "ddd978af6a86223cee7c72cb2509e153a0e5e7ae51661113b1f112c8c5ac109e" && acc == "testnet" {
 		hash = "b"
 	}
 	if len(tx.Vout) != 0 {
@@ -48,13 +47,16 @@ func (w *Wallet) processTransactionPerAccount(tx *safex.Transaction, blckHash st
 			return err
 		}
 		_, extraFields := ParseExtra(&tx.Extra)
-		pubTxKey := extraFields[TX_EXTRA_TAG_PUBKEY].(curve.Key)
-
+		bytes := extraFields[TX_EXTRA_TAG_PUBKEY].([crypto.KeyLength]byte)
+		pubTxKey, err := curve.NewFromBytes(bytes[:])
+		if err != nil {
+			return err
+		}
 		// @todo uniform key structure.
 
 		tempKey := curve.Key(w.account.PrivateViewKey().ToBytes())
 
-		ret, err := crypto.DeriveKey((*crypto.Key)(&pubTxKey), (*crypto.Key)(&tempKey))
+		ret, err := crypto.DeriveKey((*crypto.Key)(pubTxKey), (*crypto.Key)(&tempKey))
 		if err != nil {
 			return err
 		}
@@ -1206,7 +1208,6 @@ func (w *Wallet) TxAccountCreate(
 		return nil, ErrDaemonInfo
 	}
 
-
 	upperTxSizeLimit := GetUpperTransactionSizeLimit(2, 10)
 	feePerKb := w.GetPerKBFee()
 	feeMultiplier := GetFeeMultiplier(priority, GetFeeAlgorithm())
@@ -1249,7 +1250,6 @@ func (w *Wallet) TxAccountCreate(
 			}
 		}
 	}
-
 
 	if (len(unusedOutputsToken) == 0 && len(dustOutputsToken) == 0) || (len(unusedOutputsCash) == 0 && len(dustOutputsCash) == 0) {
 		return []PendingTx{}, nil
